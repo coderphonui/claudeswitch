@@ -209,34 +209,47 @@ ${c.bold("Quota: the 5-hour and weekly windows")}
 
 Claude Code meters a subscription in overlapping windows — a 5-hour session
 window, a rolling week, and on some plans a separate weekly budget per model —
-plus extra usage credits when those are enabled. Each window reports how much is
-consumed and when it rolls over, and ${c.cyan("cs usage")} shows all of them per account with
-the time remaining.
+plus extra usage credits when those are enabled. ${c.cyan("cs usage")} shows all of them per
+account with the time remaining.
 
-${c.bold("Where the numbers come from, and the catch")}
+${c.bold("The quota belongs to the account, not to this machine")}
 
-Claude Code fetches usage from its API and caches the result in each config
-directory's .claude.json. claudeswitch reads that cache. It does not fetch:
-asking the API directly would mean reading the account's access token out of the
-macOS Keychain, and this tool never reads a token — see SECURITY.md.
+Anthropic meters the identity. Using an account anywhere — another terminal,
+another machine, claude.ai, or a second claudeswitch account holding the same
+login — consumes the same windows. There is no per-directory allowance.
 
-The catch is coverage. Claude Code only fetches usage when something in its
-interface needs it, which in practice means opening ${c.cyan("/usage")}. A ${c.cyan("claude -p")} run does
-not fetch it, and neither does merely starting a session. So a new account shows
-nothing until you have looked at usage inside it once:
+What is per-directory is the ${c.bold("recording")}. Claude Code fetches usage from its API and
+caches the result in each config directory's .claude.json; claudeswitch reads
+that cache. So the numbers are accurate as of their timestamp, which is always
+shown, and usage burned elsewhere since then is counted by Anthropic but not yet
+visible here.
+
+Two things soften that. A reading recorded by any directory signed in as the same
+identity is used, freshest first, and its origin is named — so an account you have
+never opened ${c.cyan("/usage")} in can still show real numbers if a sibling account or
+~/.claude has them. And a window whose reset time has already passed is reported
+as rolled over rather than shown at its old percentage, because that number
+describes a window which no longer exists.
+
+${c.bold("Why claudeswitch does not just ask the API")}
+
+Fetching would mean reading the account's access token out of the macOS Keychain,
+and this tool never reads a token. See SECURITY.md.
+
+The cost is coverage: Claude Code fetches usage only when its own interface needs
+it — opening ${c.cyan("/usage")}, or running into a limit. A ${c.cyan("claude -p")} run does not fetch it. So
+a new account shows nothing until you have looked at usage inside it once:
 
   cs use work           then run /usage in Claude Code
-
-After that the reading is there, and every later visit to ${c.cyan("/usage")} refreshes it.
 
 ${c.bold("Reading the output")}
 
 The bar and percentage are coloured by how close the limit is, not by which limit
 it is — what matters at a glance is whether you are about to be cut off. Claude
-Code ignores its own cache once it is an hour old, so ${c.cyan("cs usage")} marks anything
-older as a historical reading, and ${c.cyan("cs ls --usage")} prefixes it with "~".
+Code ignores its own cache once it is an hour old, so anything older is marked as
+a historical reading, and ${c.cyan("cs ls --usage")} prefixes it with "~".
 
-The column in ${c.cyan("cs ls --usage")} shows only the tightest window, since that is the one
+That column shows only the tightest window still in force, since that is the one
 that will actually stop you. Use ${c.cyan("cs usage")} to see them all.
 `,
   tokens: () => `

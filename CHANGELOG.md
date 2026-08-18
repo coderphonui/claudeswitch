@@ -26,6 +26,9 @@ First public release.
   that Claude Code limits them to inference-only scope.
 - `cs usage` and `cs ls --usage`: per-account 5-hour and weekly quota windows
   with reset times, and extra usage credits, read from Claude Code's own cache.
+  Readings are pooled by identity, so an account can report real numbers from a
+  reading any directory signed in as the same login recorded; a window whose reset
+  time has passed is reported as rolled over rather than at its old percentage.
 - `cs doctor` and `cs repair`, including detection of two accounts sharing one
   credential — the failure that makes copy-based switchers demand repeated
   logins.

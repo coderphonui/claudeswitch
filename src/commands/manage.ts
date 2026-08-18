@@ -34,7 +34,8 @@ const PRIVATE_PATHS = [
 ];
 
 export function cmdAdd(args: Args): number {
-  requireClaudeBin();
+  const willLogin = flagBool(args, "login", true);
+  if (willLogin) requireClaudeBin();
   const reg = loadRegistry();
   let slug = args.positionals[0];
   if (!slug) {
@@ -68,7 +69,7 @@ export function cmdAdd(args: Args): number {
     notes: flagString(args, "notes"),
   };
 
-  if (flagBool(args, "login", true)) {
+  if (willLogin) {
     out();
     info(`Opening the Claude login flow for ${c.bold(slug)}…`);
     out(c.dim("  A browser window opens. Sign in with the account you want to store here."));

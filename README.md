@@ -184,21 +184,35 @@ window, a rolling week, sometimes a separate weekly budget per model — plus ex
 usage credits where enabled. `cs usage` shows all of them per account with the
 time remaining, so you can see which account still has room before you switch.
 
-**One limitation, worth understanding.** Claude Code fetches usage from its API
-and caches the result in each config directory. claudeswitch reads that cache; it
-does not fetch, because fetching would mean reading the account's access token
-out of the macOS Keychain, and this tool never reads a token.
+**The quota belongs to the account, not to this machine.** Anthropic meters the
+identity, so using an account anywhere — another terminal, another machine,
+claude.ai, or a second claudeswitch account holding the same login — consumes the
+same windows. There is no per-directory allowance.
 
-Claude Code only fetches usage when its own interface needs it — in practice when
-you open `/usage`. A `claude -p` run does not fetch it, and neither does merely
-starting a session. So a new account shows nothing until you have looked at usage
-inside it once:
+**What is per-directory is the recording.** Claude Code fetches usage from its API
+and caches the result in each config directory; claudeswitch reads that cache
+rather than fetching, because fetching would mean reading the account's access
+token out of the macOS Keychain, and this tool never reads a token. So the numbers
+are accurate as of their timestamp — always shown — and usage burned elsewhere
+since then is counted by Anthropic but not yet visible here.
+
+Two things soften that:
+
+- A reading recorded by any directory signed in as the **same identity** is used,
+  freshest first, with its origin named. An account you have never opened `/usage`
+  in can still show real numbers if a sibling account or `~/.claude` has them.
+- A window whose reset time has already passed is reported as rolled over instead
+  of at its old percentage, since that number describes a window that no longer
+  exists.
+
+Claude Code fetches usage only when its own interface needs it — opening `/usage`,
+or running into a limit. A `claude -p` run does not. So a brand-new account shows
+nothing until you have looked at usage inside it once:
 
 ```sh
 cs use work        # then run /usage in Claude Code
 ```
 
-After that the reading is there and refreshes whenever you revisit `/usage`.
 Claude Code ignores its own cache once it is an hour old, so `cs usage` labels
 anything older as a historical reading, and `cs ls --usage` prefixes it with `~`.
 

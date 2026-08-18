@@ -1,4 +1,6 @@
-import { accountConfigJson } from "./paths.ts";
+import { readdirSync } from "node:fs";
+import { join } from "node:path";
+import { ACCOUNTS_DIR, DEFAULT_CLAUDE_JSON, accountConfigJson } from "./paths.ts";
 import { readJson } from "./util.ts";
 
 /**
@@ -17,10 +19,16 @@ import { readJson } from "./util.ts";
 export interface UsageBucket {
   key: string;
   label: string;
-  /** Percentage of the limit consumed, 0-100. */
+  /** Percentage of the limit consumed, 0-100, as of the reading. */
   utilization: number;
   /** When the window rolls over, if the API said. */
   resetsAt?: number;
+  /**
+   * The window rolled over after this reading was taken, so the percentage is
+   * known to be obsolete rather than merely old. Showing a stale "100%" for a
+   * window that has since reset would be actively misleading.
+   */
+  rolledOver: boolean;
 }
 
 export interface ExtraUsage {
@@ -37,6 +45,16 @@ export interface ExtraUsage {
 export interface UsageSnapshot {
   fetchedAt: number;
   ageMs: number;
+  /** The identity this reading belongs to. */
+  identity?: string;
+  /**
+   * Set when the reading was recorded by a different config directory than the
+   * account being asked about. Quota belongs to the identity on Anthropic's
+   * side, not to a directory, so any reading for the same identity is valid —
+   * and using the freshest one across directories is strictly better than
+   * showing nothing.
+   */
+  source?: string;
   /**
    * Claude Code itself ignores a cache older than an hour (`hzb = 3600000`), so
    * anything past that is reported as a historical reading rather than as the
@@ -84,18 +102,80 @@ interface RawConfig {
   };
 }
 
+/**
+ * The best available reading for an account's quota.
+ *
+ * Claude Code records usage per config directory, but the limits it describes
+ * belong to the identity. So if the same account is signed in somewhere else
+ * claudeswitch knows about — another managed account, or Claude Code's own
+ * ~/.claude — the freshest reading for that identity is used, and its origin is
+ * reported.
+ */
 export function readUsage(slug: string, now = Date.now()): UsageSnapshot | null {
-  const config = readJson<RawConfig>(accountConfigJson(slug));
+  const identity = accountIdentity(slug);
+  const own = parseReading(accountConfigJson(slug), identity, now);
+
+  if (!identity) return own;
+
+  let best = own;
+  for (const candidate of otherReadings(slug, identity, now)) {
+    if (!best || candidate.fetchedAt > best.fetchedAt) best = candidate;
+  }
+  if (best && own && best.fetchedAt === own.fetchedAt) return own;
+  return best;
+}
+
+/** The identity a config directory is signed in as. */
+export function accountIdentity(slug: string): string | undefined {
+  const uuid = readJson<RawConfig>(accountConfigJson(slug))?.oauthAccount?.accountUuid;
+  return typeof uuid === "string" ? uuid : undefined;
+}
+
+/** Readings recorded by other directories for the same identity. */
+function otherReadings(slug: string, identity: string, now: number): UsageSnapshot[] {
+  const found: UsageSnapshot[] = [];
+
+  for (const dir of siblingAccountDirs(slug)) {
+    const reading = parseReading(join(ACCOUNTS_DIR, dir, ".claude.json"), identity, now);
+    if (reading) found.push({ ...reading, source: `account ${dir}` });
+  }
+
+  const fromDefault = parseReading(DEFAULT_CLAUDE_JSON, identity, now);
+  if (fromDefault) found.push({ ...fromDefault, source: "~/.claude" });
+
+  return found;
+}
+
+function siblingAccountDirs(slug: string): string[] {
+  try {
+    return readdirSync(ACCOUNTS_DIR, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && entry.name !== slug)
+      .map((entry) => entry.name);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Parse one `.claude.json`'s cached reading.
+ *
+ * `wantIdentity` is required to match when both sides know it — Claude Code
+ * discards a cache belonging to a different identity, and so must this, or a
+ * re-login as somebody else would show the previous account's quota.
+ */
+function parseReading(configPath: string, wantIdentity: string | undefined, now: number): UsageSnapshot | null {
+  const config = readJson<RawConfig>(configPath);
   const cached = config?.cachedUsageUtilization;
   if (!cached || typeof cached.fetchedAtMs !== "number") return null;
 
-  // Claude Code discards a cache belonging to a different identity, and so must
-  // this: after a re-login as someone else, the stale numbers would otherwise be
-  // shown against the new account.
-  const own = config?.oauthAccount?.accountUuid;
-  if (typeof own === "string" && typeof cached.accountUuid === "string" && cached.accountUuid !== own) {
-    return null;
-  }
+  const readingIdentity =
+    typeof cached.accountUuid === "string" ? cached.accountUuid : undefined;
+  const dirIdentity =
+    typeof config?.oauthAccount?.accountUuid === "string" ? config.oauthAccount.accountUuid : undefined;
+
+  if (readingIdentity && dirIdentity && readingIdentity !== dirIdentity) return null;
+  if (wantIdentity && readingIdentity && readingIdentity !== wantIdentity) return null;
+  if (wantIdentity && !readingIdentity && dirIdentity && dirIdentity !== wantIdentity) return null;
 
   const ageMs = now - cached.fetchedAtMs;
   if (ageMs < 0) return null;
@@ -113,11 +193,13 @@ export function readUsage(slug: string, now = Date.now()): UsageSnapshot | null 
     if (typeof raw.utilization !== "number") continue;
     if (raw.utilization === 0 && HIDE_WHEN_EMPTY.has(key)) continue;
 
+    const resetsAt = typeof raw.resets_at === "string" ? parseTime(raw.resets_at) : undefined;
     buckets.push({
       key,
       label: LABELS[key] ?? humanise(key),
       utilization: raw.utilization,
-      resetsAt: typeof raw.resets_at === "string" ? parseTime(raw.resets_at) : undefined,
+      resetsAt,
+      rolledOver: resetsAt !== undefined && resetsAt <= now,
     });
   }
 
@@ -126,18 +208,25 @@ export function readUsage(slug: string, now = Date.now()): UsageSnapshot | null 
   return {
     fetchedAt: cached.fetchedAtMs,
     ageMs,
+    identity: readingIdentity ?? dirIdentity,
     stale: ageMs > USAGE_FRESH_FOR_MS,
     buckets,
     extraUsage,
   };
 }
 
-/** The tightest limit right now — the one that will actually stop you. */
+/**
+ * The tightest limit right now — the one that will actually stop you. Windows
+ * that have rolled over since the reading are excluded: their number no longer
+ * describes anything.
+ */
 export function tightestBucket(snapshot: UsageSnapshot): UsageBucket | undefined {
-  return snapshot.buckets.reduce<UsageBucket | undefined>(
-    (worst, b) => (!worst || b.utilization > worst.utilization ? b : worst),
-    undefined,
-  );
+  return snapshot.buckets
+    .filter((b) => !b.rolledOver)
+    .reduce<UsageBucket | undefined>(
+      (worst, b) => (!worst || b.utilization > worst.utilization ? b : worst),
+      undefined,
+    );
 }
 
 function parseExtraUsage(value: unknown): ExtraUsage | undefined {

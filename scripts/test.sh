@@ -280,6 +280,46 @@ contains "a reading from another identity is discarded" "no usage data" "$("$CS"
 
 contains "a missing reading explains how to get one" "/usage" "$("$CS" usage beta)"
 
+# Quota belongs to the identity, not to a directory: a reading recorded anywhere
+# for the same account is valid, and using the freshest one beats showing nothing.
+"$CS" add twin --no-login --share none >/dev/null 2>&1
+python3 -c "
+import json
+shared='aaaaaaaa-1111-2222-3333-444444444444'
+for acct in ('twin','beta'):
+    p='$ROOT/accounts/%s/.claude.json' % acct
+    d=json.load(open(p))
+    d['oauthAccount']={'accountUuid':shared,'emailAddress':'shared@example.com'}
+    if acct=='twin': d.pop('cachedUsageUtilization',None)
+    json.dump(d,open(p,'w'),indent=2)
+"
+write_usage beta aaaaaaaa-1111-2222-3333-444444444444 10 64
+OUT="$("$CS" usage twin)"
+contains "an account borrows a sibling's reading for the same identity" "5-hour session" "$OUT"
+contains "and says where it came from" "recorded by account beta" "$OUT"
+contains "a different identity does not borrow it" "no usage data" "$("$CS" usage alpha)"
+
+# A window whose reset time has passed: the percentage describes a window that no
+# longer exists, so it must not be presented as current.
+python3 -c "
+import json,time,datetime
+now=int(time.time()*1000)
+past=datetime.datetime.fromtimestamp(now/1000-7200, datetime.timezone.utc).isoformat()
+future=datetime.datetime.fromtimestamp(now/1000+180000, datetime.timezone.utc).isoformat()
+p='$ROOT/accounts/beta/.claude.json'; d=json.load(open(p))
+d['cachedUsageUtilization']={'fetchedAtMs':now-6*3600*1000,
+  'accountUuid':'aaaaaaaa-1111-2222-3333-444444444444','utilization':{
+    'five_hour':{'utilization':100,'resets_at':past},
+    'seven_day':{'utilization':22,'resets_at':future}}}
+json.dump(d,open(p,'w'),indent=2)
+"
+OUT="$("$CS" usage beta)"
+contains "a rolled-over window is labelled, not shown as current" "window reset" "$OUT"
+check "and its stale percentage is withheld" "0" "$(printf '%s' "$OUT" | grep -c '100%')"
+contains "the still-valid window is unaffected" "22%" "$OUT"
+contains "the ls column falls back to the valid window" "7d 22%" "$("$CS" ls --usage)"
+"$CS" rm twin --yes --keep-credentials >/dev/null 2>&1
+
 write_usage beta 22222222-2222-2222-2222-222222222222 5 42
 contains "ls --usage adds a quota column" "QUOTA" "$("$CS" ls --usage)"
 check "ls hides quota by default" "0" "$("$CS" ls | grep -c 'QUOTA')"

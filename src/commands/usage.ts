@@ -84,11 +84,16 @@ function printAccount(acc: AccountRecord, usage: UsageSnapshot | null, isActive:
 
   const width = Math.max(...usage.buckets.map((b) => b.label.length), 14);
   for (const bucket of usage.buckets) {
-    const reset = bucket.resetsAt
-      ? bucket.resetsAt <= now
-        ? c.dim("reset due")
-        : c.dim(`resets in ${duration(bucket.resetsAt - now)}`)
-      : "";
+    // A window that has rolled over since the reading: the percentage describes
+    // a window that no longer exists, so it is not shown as if it were current.
+    if (bucket.rolledOver) {
+      out(
+        `  ${bucket.label.padEnd(width)}  ${c.dim("— ".repeat(5))} ` +
+          `${c.dim("  ?")}  ${c.dim(`window reset ${duration(now - bucket.resetsAt!)} ago, after this reading`)}`,
+      );
+      continue;
+    }
+    const reset = bucket.resetsAt ? c.dim(`resets in ${duration(bucket.resetsAt - now)}`) : "";
     out(
       `  ${bucket.label.padEnd(width)}  ${meter(bucket.utilization)} ` +
         `${percentText(bucket.utilization).padStart(4)}  ${reset}`,
@@ -107,7 +112,8 @@ function printAccount(acc: AccountRecord, usage: UsageSnapshot | null, isActive:
     if (extra.spendLimitReached) out(`  ${" ".repeat(width)}  ${c.red("spend limit reached")}`);
   }
 
-  const asOf = c.dim(`as of ${duration(usage.ageMs)} ago`);
+  const origin = usage.source ? c.dim(`, recorded by ${usage.source}`) : "";
+  const asOf = c.dim(`as of ${duration(usage.ageMs)} ago`) + origin;
   out(
     usage.stale
       ? `  ${c.yellow(sym.warn)} ${asOf} ${c.dim(`— Claude Code itself ignores readings older than ${duration(USAGE_FRESH_FOR_MS)}`)}`
@@ -120,7 +126,7 @@ export function usageCell(slug: string, now = Date.now()): string {
   const usage = readUsage(slug, now);
   if (!usage) return c.dim("—");
   const worst = tightestBucket(usage);
-  if (!worst) return c.dim("—");
+  if (!worst) return c.dim("?");
 
   const label = worst.key === "five_hour" ? "5h" : worst.key === "seven_day" ? "7d" : worst.label;
   const text = `${label} ${percentText(worst.utilization)}`;
@@ -129,8 +135,8 @@ export function usageCell(slug: string, now = Date.now()): string {
 }
 
 export function explainMissing(): void {
-  out(c.dim("  Claude Code records usage only when something in its UI asks for it, so an"));
-  out(c.dim("  account shows nothing until you look at usage inside a session there:"));
+  out(c.dim("  Claude Code records usage when its own interface needs it — opening /usage"));
+  out(c.dim("  does it, and so does hitting a limit. An account shows nothing until then:"));
   out();
   out(`    ${c.cyan("cs use <account>")}   ${c.dim("then run")} ${c.cyan("/usage")} ${c.dim("in Claude Code")}`);
   out();

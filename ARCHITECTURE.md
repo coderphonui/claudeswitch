@@ -172,12 +172,23 @@ numbers mean the same thing in both places:
 - Readings older than an hour (`hzb = 3600000`) are marked as historical, because
   that is the point at which Claude Code stops trusting its own cache.
 
-The cost is coverage. The fetch happens only from interactive code paths — the
-`/usage` panel and the extra-usage flows. *Verified:* a `claude -p` turn does not
-populate the cache, and neither does starting an interactive session and exiting;
-the default account had a reading only because `/usage` had been opened there.
-So `cs usage` reports on accounts you have looked at usage in, and explains how
-to populate the rest.
+Coverage is the cost. The fetch happens only from interactive code paths — the
+`/usage` panel, the extra-usage flows, and the limit messages. *Verified:* a
+`claude -p` turn does not populate the cache; a real working session does.
+
+Two refinements follow from the fact that a limit belongs to the identity rather
+than to a directory:
+
+- Readings are pooled by `accountUuid`. `readUsage` looks in the account's own
+  directory, every sibling account directory, and `~/.claude`, keeps those whose
+  identity matches, and uses the freshest — naming its origin in the output. An
+  account never opened in `/usage` can therefore still report real numbers.
+  *Verified:* `~/.claude` and the managed `khoa.tran` account, the same identity
+  in two directories, reported identical windows from independent fetches 44
+  minutes apart.
+- A bucket whose `resets_at` has passed is flagged `rolledOver`. Its percentage
+  describes a window that no longer exists, so it is withheld rather than
+  displayed, and `tightestBucket` skips it.
 
 ## Sharing configuration
 
