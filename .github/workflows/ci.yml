@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    # macOS only: the suite exercises zsh integration, stty-driven terminal
+    # output and macOS-specific credential handling.
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Lint
+        run: bun run lint
+
+      - name: Build
+        run: bun run build
+
+      # The suite runs entirely inside a temporary CLAUDESWITCH_HOME and never
+      # invokes `claude`, so no credentials are needed on the runner.
+      - name: Test
+        run: ./scripts/test.sh
+
+      - name: Smoke-test the binary
+        run: |
+          ./dist/claudeswitch --version
+          ./dist/claudeswitch help > /dev/null
+          ./dist/claudeswitch help tokens > /dev/null
+          ./dist/claudeswitch init --shell zsh > /dev/null
+          ./dist/claudeswitch init --shell bash > /dev/null
+          ./dist/claudeswitch init --shell fish > /dev/null
+
+      - name: Check the generated zsh hook parses
+        run: ./dist/claudeswitch init --shell zsh | zsh -n
+
+      - name: Check the generated bash hook parses
+        run: ./dist/claudeswitch init --shell bash | bash -n
+
+      - name: Check the generated fish hook parses
+        run: |
+          if command -v fish >/dev/null; then
+            ./dist/claudeswitch init --shell fish | fish -n
+          else
+            echo "fish is not installed on this runner; skipping"
+          fi

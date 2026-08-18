@@ -1,0 +1,47 @@
+{
+  "name": "claudeswitch",
+  "version": "1.0.0",
+  "description": "Run several Claude Code accounts at the same time, one per terminal, on macOS.",
+  "keywords": [
+    "claude",
+    "claude-code",
+    "anthropic",
+    "cli",
+    "account-switcher",
+    "macos",
+    "oauth"
+  ],
+  "homepage": "https://github.com/coderphonui/claudeswitch#readme",
+  "bugs": {
+    "url": "https://github.com/coderphonui/claudeswitch/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/coderphonui/claudeswitch.git"
+  },
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "os": [
+    "darwin"
+  ],
+  "engines": {
+    "bun": ">=1.1.0"
+  },
+  "bin": {
+    "claudeswitch": "./dist/claudeswitch"
+  },
+  "scripts": {
+    "build": "bun build src/cli.ts --compile --minify --outfile dist/claudeswitch",
+    "dev": "bun run src/cli.ts",
+    "typecheck": "tsc --noEmit",
+    "lint": "python3 scripts/check-value-flags.py && python3 scripts/check-docs.py",
+    "test": "bun run build && ./scripts/test.sh",
+    "check": "bun run typecheck && bun run lint && bun run test",
+    "install-local": "bash install.sh"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.6.0"
+  }
+}

@@ -1,0 +1,10 @@
+# Build output — the compiled binary is ~60 MB and is produced by ./install.sh
+dist/
+
+node_modules/
+
+# macOS
+.DS_Store
+
+# Logs and local scratch
+*.log
