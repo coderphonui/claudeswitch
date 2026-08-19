@@ -21,8 +21,10 @@ export const VALUE_FLAGS = new Set([
   "alias",
   "email",
   "everyDays",
+  "from",
   "label",
   "notes",
+  "session",
   "share",
   "shell",
 ]);

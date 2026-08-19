@@ -4,6 +4,27 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `cs handoff <account>`: continue the current project's Claude Code
+  conversation on another account, for when the one it started on runs out of
+  quota. Finds the session for the current directory by reading the `cwd`
+  every transcript line already carries, copies it into the target account
+  under the identical `projects/` directory name so `claude --resume` finds
+  it, switches the terminal over, and launches `claude --resume` there —
+  even though the command's own stdout is normally captured by the shell
+  hook's `eval "$(...)"`, by riding the launch along with the exported
+  variables into the caller's real shell. `--session` disambiguates when more
+  than one session matches; `--from` reads from an account other than the
+  current one; `--move` removes the source copy instead of leaving it;
+  `--no-open` switches without launching `claude`; `--stay` copies without
+  switching or launching. Falls back to a plain switch, with a warning,
+  when `claude` cannot be found. Asks for confirmation, since this is the
+  one command that deliberately copies private data across the isolation
+  boundary every other command protects.
+
 ## [1.0.0] - 2026-08-18
 
 First public release.

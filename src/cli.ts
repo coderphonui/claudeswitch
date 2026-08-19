@@ -6,6 +6,7 @@ import { UserError } from "./core/util.ts";
 import { cmdAlias, cmdUnalias } from "./commands/alias.ts";
 import { cmdLogin, cmdLogout } from "./commands/auth.ts";
 import { cmdDoctor, cmdRepair } from "./commands/doctor.ts";
+import { cmdHandoff } from "./commands/handoff.ts";
 import { cmdInit } from "./commands/init.ts";
 import { cmdKeepwarm } from "./commands/keepwarm.ts";
 import { cmdCurrent, cmdList } from "./commands/list.ts";
@@ -54,6 +55,7 @@ const FLAGS: Record<string, readonly string[]> = {
   exec: [],
   run: [],
   shell: [],
+  handoff: ["from", "session", "move", "yes", "stay", "open"],
   usage: [],
   refresh: ["force", "due"],
   keepwarm: ["install", "uninstall", "everyDays"],
@@ -92,6 +94,7 @@ const HANDLERS: Record<string, (args: Args) => number> = {
   exec: cmdExec,
   run: cmdRun,
   shell: cmdShell,
+  handoff: cmdHandoff,
   usage: cmdUsage,
   refresh: cmdRefresh,
   keepwarm: cmdKeepwarm,
@@ -174,6 +177,9 @@ ${c.bold("WITHOUT SWITCHING")}
   cs shell <name>           open a subshell pinned to that account
   cs which [name]           print the account's CLAUDE_CONFIG_DIR
 
+${c.bold("CONTINUING A SESSION")}
+  cs handoff <name>         switch and resume this project's chat on another account ${c.dim("(--session, --from, --move, --no-open, --stay)")}
+
 ${c.bold("CONFIG SHARING")}
   cs share                  what can be shared, and each account's policy
   cs share <name> <policy>  all | none | skills,plugins,…
@@ -194,7 +200,7 @@ ${c.bold("MAINTENANCE")}
 
 ${c.bold("STATE")}  ${c.dim(ROOT)}
 
-${c.dim("More detail:")} cs help usage ${c.dim("·")} cs help tokens ${c.dim("·")} cs help aliases ${c.dim("·")} cs help isolation ${c.dim("·")} cs help sharing ${c.dim("·")} cs help shell`);
+${c.dim("More detail:")} cs help usage ${c.dim("·")} cs help tokens ${c.dim("·")} cs help aliases ${c.dim("·")} cs help isolation ${c.dim("·")} cs help sharing ${c.dim("·")} cs help shell ${c.dim("·")} cs help handoff`);
 }
 
 // Built lazily so colour settings are already resolved.
@@ -424,6 +430,57 @@ Without the hook, everything still works:
   cs run work                    launch claude as that account
   cs exec work -- npm test       any command
   cs shell work                  a pinned subshell
+`,
+  handoff: () => `
+${c.bold("Continuing a session on another account")}
+
+  cs handoff <account>              hand this project's chat to that account
+
+Run it from inside the project, in the same terminal the session ran in — the
+common case is the account you were just using hit a rate limit. It finds the
+Claude Code session for the current directory, copies its transcript into the
+target account, switches this terminal to it, and opens ${c.cyan("claude --resume")} right
+there — one command to get back to exactly where you left off, on an account
+that still has quota.
+
+That last step works even though this process's own output is normally
+swallowed by \`eval "$(...)"\`: the launch line rides along with the exported
+variables and only actually runs once the shell's \`eval\` gets to it, in the
+caller's real shell — by which point the capture around this process has
+already finished. Pass ${c.cyan("--no-open")} to only switch and print the command instead.
+
+${c.bold("How it finds the right session")}
+
+Claude Code stamps every line of a transcript with the directory it was run
+from. ${c.cyan("cs handoff")} reads that instead of guessing at Claude Code's own naming
+scheme for the projects/ directory, and copies the transcript into the target
+account under the identical directory name — the one Claude Code already
+chose for this project — so ${c.cyan("claude --resume")} finds it in the new account exactly
+where it would have found it in the old one.
+
+  --from <account>   read the session from there instead of this terminal's
+                      current account (or ~/.claude if neither is set)
+  --session <id>      which one, if more than one session matches this
+                      directory — a prefix is enough
+  --move               remove it from the source once copied
+  --yes                 skip the confirmation prompt
+  --no-open             switch and print the resume command, but don't run it
+  --stay                copy only; do not switch this terminal, and don't open
+
+${c.bold("Why it asks first")}
+
+Every other command in this tool protects account isolation — projects/ is
+deliberately private, listed in ${c.cyan("cs help isolation")}. ${c.cyan("cs handoff")} is the one
+command that deliberately crosses that boundary, copying a conversation's
+content to a different identity. That is the entire point, but it is still
+worth a confirmation: anyone signed into the target account can read it.
+
+${c.bold("What does not come along")}
+
+Only the transcript moves. Claude Code's per-message file-edit snapshots (used
+by /rewind) and its shell/session bookkeeping stay behind — neither is needed
+to keep talking, and reconstructing them would mean guessing at storage
+formats this tool has not verified.
 `,
 };
 

@@ -207,6 +207,102 @@ Private per account, because sharing them would break isolation:
 `sessions/`, `history.jsonl`, `todos/`. `cs doctor` fails loudly if any of them
 becomes a symlink.
 
+## Handing off a session
+
+`cs handoff` deliberately crosses the boundary above: it copies one
+conversation's transcript from one account's `projects/` into another's, so
+the conversation can continue under an identity that still has quota.
+
+Claude Code stores each conversation as a JSONL transcript at
+`<CLAUDE_CONFIG_DIR>/projects/<name>/<session-id>.jsonl`, one line per turn.
+*Verified:* reading a live transcript shows every line — including the very
+first, a `{"type":"mode",...}` line with no `cwd` — but user- and
+assistant-turn lines each carry `"cwd"` (the absolute directory `claude` was
+run from) and `"sessionId"` (matching the filename).
+
+`<name>` is Claude Code's own encoding of that `cwd` — this project does not
+reproduce that encoding. Getting it wrong on an edge case (a path with `.` or
+other punctuation, or a future Claude Code version changing the scheme) would
+silently write the transcript somewhere `--resume` never looks. Instead,
+`findSessionsForCwd` (`src/core/sessions.ts`) walks every project directory
+under an account, reads far enough into each transcript to find its `cwd`, and
+keeps the ones matching `process.cwd()`. The read is capped at 64 KiB: `cwd`
+and `sessionId` land in the first line or two of any real transcript, so a
+long-running session's multi-megabyte file is never read in full just to
+answer "which project is this".
+
+Copying then reuses `<name>` verbatim — the literal directory basename the
+source session already lived in — for the destination. Nothing about Claude
+Code's naming scheme has to be known for that to work, only that the same cwd
+produces the same name, which is exactly the property `--resume` also depends
+on.
+
+Only the transcript moves. `todos/`, `file-history/` and `session-env` are
+also private per account, but this project has not verified how they key
+entries to a specific session on the machines it was built on (an empty
+`todos/` directory even mid-session, on the Claude Code version this was
+built against) — copying them on a guess risks silently corrupting another
+session's state, which is worse than leaving them behind. A resumed session
+still has its full conversation history; it only loses `/rewind` snapshots and
+todo-list UI state.
+
+Because this is the one command that intentionally moves private data across
+an identity boundary, it asks for confirmation (`confirm(question)`, default
+no) unless `--yes` is passed, and refuses outright rather than silently
+proceeding when there is no `/dev/tty` to ask on. Copying is the default over
+moving — consistent with "never lose data" elsewhere in this project — so
+`--move` has to be requested explicitly.
+
+### Launching `claude` from a command whose own stdout is captured
+
+By default `cs handoff` does not stop at switching; it also runs `claude
+--resume <session-id>` in the account it just switched to. The interesting
+part is that this works at all: `cs handoff`, like `cs use`, is captured by
+the shell hook —
+
+```sh
+__cs_code="$(CLAUDESWITCH_SHELL_HOOK=1 … claudeswitch "$@")"
+eval "$__cs_code"
+```
+
+— so this process's own stdout is a pipe into a shell variable, not the
+terminal. Spawning an interactive program with `stdio: "inherit"` from inside
+that capture would inherit the pipe, not the terminal: exactly the failure
+mode ruled out for `cs shell`/`cs run`, which is why those are
+`PASSTHROUGH_COMMANDS` instead — their stdout is never captured in the first
+place.
+
+`cs handoff` cannot be a passthrough command, because it also needs to export
+variables into the caller's shell, which requires being captured and eval'd
+like `cs use`. The way out: the *eval itself* runs in the caller's real shell,
+after the `$(...)` around this process has already finished and closed. Code
+placed inside that eval'd string therefore runs with the real terminal, not
+this process's pipe. `cmdUse` (`src/commands/use.ts`) takes an `extra: string[]`
+parameter for exactly this — lines appended to the exported code, after the
+exports, so a program launched there inherits the just-switched environment:
+
+```
+export CLAUDE_CONFIG_DIR='…';
+…
+'/path/to/claude' --resume '<session-id>';
+```
+
+`cs handoff` builds that last line and passes it as `extra`; `cs use` itself
+never generates one, so this stays specific to the one command that needs it.
+
+When there is no shell hook active — `isEmitMode()` false, e.g. the binary was
+invoked directly — the eval trick has nothing to run in, but the situation is
+simpler: this process's own stdout was never captured by anything, so it *is*
+the real terminal, and `cs handoff` spawns `claude --resume` directly with
+`stdio: "inherit"`, the same way `cs run` does. The switch itself still cannot
+reach the parent shell — nothing run as a child process can, hook or not —
+so `cs use`'s usual "shell integration is not active" message still prints;
+only the conversation-continuation goal is still met without it.
+
+Either path degrades to a plain switch — a warning, not a thrown error — when
+`findClaudeBin()` comes back empty, so a machine without Claude Code on `PATH`
+still gets the copy and the switch; only the extra launch is skipped.
+
 ## Concurrency
 
 Every read-modify-write of `registry.json` goes through `mutateRegistry`, which

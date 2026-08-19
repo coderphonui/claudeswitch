@@ -13,7 +13,14 @@ import { ENV_VARS, detectShell, exportCode, unsetCode } from "../shell/hook.ts";
 import { c, emit, info, isEmitMode, out, success, warn } from "../ui/io.ts";
 import { pick, ttyAvailable } from "../ui/picker.ts";
 
-export function cmdUse(args: Args): number {
+/**
+ * `extra`: shell code lines to run after the exports, only when a hook is
+ * active to eval them — used by `cs handoff --open` to launch `claude
+ * --resume` in the same breath as switching, still connected to the real
+ * terminal because `eval` runs it in the caller's shell, after the capturing
+ * `$(...)` around this process's own stdout has already finished.
+ */
+export function cmdUse(args: Args, extra: string[] = []): number {
   const reg = loadRegistry();
   const quiet = flagBool(args, "quiet");
   let slug = args.positionals[0];
@@ -101,7 +108,6 @@ export function cmdUse(args: Args): number {
   }
 
   if (isEmitMode()) {
-    emit(code.join("\n"));
     if (!quiet) {
       success(`${c.bold(acc.slug)} ${c.dim("·")} ${acc.email ?? c.dim("not logged in")}${planTag(acc.subscriptionType)}`);
       if (conflicts.length && !keepEnv) {
@@ -110,6 +116,9 @@ export function cmdUse(args: Args): number {
         warn(`Kept ${conflicts.join(", ")} — these override OAuth, so Claude Code may not use this account.`);
       }
     }
+    // `extra` runs after the exports above, in the same eval — the exports
+    // land in the caller's shell first, so a launched `claude` picks them up.
+    emit([...code, ...extra].join("\n"));
     return 0;
   }
 

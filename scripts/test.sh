@@ -64,6 +64,95 @@ contains "emits the account name" "export CLAUDESWITCH_ACCOUNT='alpha'" "$OUT"
 check "human output stays off stdout" "" "$(echo "$OUT" | grep -c '✓' | tr -d ' ' | sed 's/^0$//')"
 contains "off unsets the variables" "unset CLAUDE_CONFIG_DIR" "$("$CS" off --emit-shell 2>/dev/null)"
 
+echo "── handoff (continuing a session on another account)"
+mkdir -p "$ROOT/handoff-project"
+HP="$(cd "$ROOT/handoff-project" && pwd -P)"
+mkdir -p "$ROOT/accounts/alpha/projects/proj-a"
+write_transcript() { # write_transcript <session-id> <cwd> <preview>
+  python3 -c "
+import json, sys
+sid, cwd, preview = sys.argv[1], sys.argv[2], sys.argv[3]
+p = '$ROOT/accounts/alpha/projects/proj-a/%s.jsonl' % sid
+with open(p, 'w') as f:
+    f.write(json.dumps({'type': 'mode', 'mode': 'normal', 'sessionId': sid}) + '\n')
+    f.write(json.dumps({'type': 'user', 'isMeta': False, 'sessionId': sid, 'cwd': cwd,
+      'message': {'role': 'user', 'content': preview}}) + '\n')
+    f.write(json.dumps({'type': 'assistant', 'sessionId': sid, 'cwd': cwd,
+      'message': {'role': 'assistant', 'content': [{'type': 'text', 'text': 'On it.'}]}}) + '\n')
+" "$1" "$2" "$3"
+}
+
+write_transcript 11111111-1111-1111-1111-111111111111 "$HP" "Refactor the payments module"
+OUT="$(cd "$HP" && "$CS" handoff beta --from alpha --session 11111111 --yes --stay --emit-shell 2>&1 >/dev/null)"
+contains "reports the copy" "Copied session 11111111 to beta" "$OUT"
+contains "prints the resume command" "claude --resume 11111111-1111-1111-1111-111111111111" "$OUT"
+check "the transcript lands under the target, same project-dir name" "yes" \
+  "$([ -f "$ROOT/accounts/beta/projects/proj-a/11111111-1111-1111-1111-111111111111.jsonl" ] && echo yes || echo no)"
+check "a copy leaves the source transcript in place" "yes" \
+  "$([ -f "$ROOT/accounts/alpha/projects/proj-a/11111111-1111-1111-1111-111111111111.jsonl" ] && echo yes || echo no)"
+check "the copied transcript is byte-identical" "yes" \
+  "$(diff -q "$ROOT/accounts/alpha/projects/proj-a/11111111-1111-1111-1111-111111111111.jsonl" \
+             "$ROOT/accounts/beta/projects/proj-a/11111111-1111-1111-1111-111111111111.jsonl" >/dev/null && echo yes || echo no)"
+check "--stay never writes to stdout" "" \
+  "$(cd "$HP" && "$CS" handoff beta --from alpha --session 11111111 --yes --stay --emit-shell 2>/dev/null)"
+
+contains "without --stay it also switches the terminal" "export CLAUDESWITCH_ACCOUNT='beta'" \
+  "$(cd "$HP" && "$CS" handoff beta --from alpha --session 11111111 --yes --emit-shell 2>/dev/null)"
+
+write_transcript 22222222-2222-2222-2222-222222222222 "$HP" "one more thing"
+(cd "$HP" && "$CS" handoff beta --from alpha --session 22222222 --move --yes --stay >/dev/null 2>&1)
+check "--move copies to the target" "yes" \
+  "$([ -f "$ROOT/accounts/beta/projects/proj-a/22222222-2222-2222-2222-222222222222.jsonl" ] && echo yes || echo no)"
+check "--move removes it from the source" "yes" \
+  "$([ ! -f "$ROOT/accounts/alpha/projects/proj-a/22222222-2222-2222-2222-222222222222.jsonl" ] && echo yes || echo no)"
+
+echo "── handoff --open (launching claude, not just switching)"
+# A stub `claude` on PATH so this never depends on the real CLI being installed.
+FAKEBIN="$(mktemp -d)"
+cat > "$FAKEBIN/claude" <<'EOF'
+#!/bin/sh
+echo "FAKE CLAUDE: CLAUDE_CONFIG_DIR=$CLAUDE_CONFIG_DIR args=$*"
+EOF
+chmod +x "$FAKEBIN/claude"
+
+OUT="$(cd "$HP" && PATH="$FAKEBIN:$PATH" "$CS" handoff beta --from alpha --session 11111111 --yes --emit-shell 2>/dev/null)"
+contains "by default, the launch line rides along with the exports" \
+  "--resume '11111111-1111-1111-1111-111111111111'" "$OUT"
+EXPORT_LINE="$(printf '%s\n' "$OUT" | grep -n "CLAUDESWITCH_ACCOUNT" | head -1 | cut -d: -f1)"
+RESUME_LINE="$(printf '%s\n' "$OUT" | grep -n -- "--resume" | head -1 | cut -d: -f1)"
+check "the launch line comes after the exports, so it inherits the switch" "yes" \
+  "$([ "${RESUME_LINE:-0}" -gt "${EXPORT_LINE:-0}" ] && echo yes || echo no)"
+check "--no-open switches but does not emit a launch line" "0" \
+  "$(cd "$HP" && PATH="$FAKEBIN:$PATH" "$CS" handoff beta --from alpha --session 11111111 --yes --no-open --emit-shell 2>/dev/null | grep -c resume)"
+
+# Without a shell hook capturing stdout, handoff owns the real stdio itself and
+# can just run the stub directly, instead of relying on a parent shell's eval.
+OUT2="$(cd "$HP" && PATH="$FAKEBIN:$PATH" "$CS" handoff beta --from alpha --session 11111111 --yes 2>&1)"
+contains "with no shell hook, it launches claude itself" "FAKE CLAUDE" "$OUT2"
+contains "and passes the target account's CLAUDE_CONFIG_DIR" "CLAUDE_CONFIG_DIR=$ROOT/accounts/beta" "$OUT2"
+
+# No claude anywhere findable (empty PATH and HOME): --open degrades to a plain
+# switch instead of failing the whole command.
+FAKEHOME="$(mktemp -d)"
+ERR3="$(cd "$HP" && env -i PATH=/usr/bin:/bin HOME="$FAKEHOME" CLAUDESWITCH_HOME="$ROOT" \
+  "$CS" handoff beta --from alpha --session 11111111 --yes --emit-shell 2>&1 >/dev/null)"
+OUT3="$(cd "$HP" && env -i PATH=/usr/bin:/bin HOME="$FAKEHOME" CLAUDESWITCH_HOME="$ROOT" \
+  "$CS" handoff beta --from alpha --session 11111111 --yes --emit-shell 2>/dev/null)"
+contains "missing claude is reported, not a crash" "Could not find the claude CLI" "$ERR3"
+contains "the switch still happens" "export CLAUDESWITCH_ACCOUNT='beta'" "$OUT3"
+rm -rf "$FAKEBIN" "$FAKEHOME"
+
+contains "an unknown --session is a clear error" "No session" \
+  "$(cd "$HP" && "$CS" handoff beta --from alpha --session deadbeef --yes 2>&1)"
+contains "the same account as both source and target is refused" "both the source and the target" \
+  "$(cd "$HP" && "$CS" handoff alpha --from alpha --yes 2>&1)"
+# Run from outside the project directory: alpha has a session, but not for this cwd.
+contains "no session for a directory the source account never ran claude in" "No Claude Code session" \
+  "$("$CS" handoff beta --from alpha --yes 2>&1)"
+contains "an unknown target account is a clear error" "No account named" \
+  "$(cd "$HP" && "$CS" handoff nope --from alpha --yes 2>&1)"
+rm -rf "$ROOT/accounts/alpha/projects" "$ROOT/accounts/beta/projects" "$ROOT/handoff-project"
+
 echo "── shared-link resilience"
 printf '%s' '{"v":"shared"}' > "$ROOT/shared/settings.json"
 printf '%s' '{"v":"local-newer"}' > "$ROOT/accounts/alpha/.t" && mv "$ROOT/accounts/alpha/.t" "$ROOT/accounts/alpha/settings.json"

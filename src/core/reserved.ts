@@ -1,5 +1,5 @@
 /** Subcommands that change the current shell's environment. */
-export const ENV_COMMANDS = ["use", "switch", "off", "unuse"] as const;
+export const ENV_COMMANDS = ["use", "switch", "off", "unuse", "handoff"] as const;
 
 /**
  * Every other subcommand. The shell hook runs these directly and leaves their

@@ -107,6 +107,7 @@ For bash or fish: `claudeswitch init --install --shell bash|fish`.
 | `cs exec <name> -- <cmd>` | run any command as that account |
 | `cs shell <name>` | subshell pinned to that account |
 | `cs which [name]` | print an account's `CLAUDE_CONFIG_DIR` |
+| `cs handoff <name>` | switch and resume this project's chat on another account (`--session`, `--from`, `--move`, `--yes`, `--no-open`, `--stay`) |
 | `cs share …` | configure what is shared between accounts |
 | `cs usage [name]` | 5-hour and weekly limits, and when they reset (`--json`) |
 | `cs refresh [name]` | roll the 30-day idle deadline forward (`--force`, `--due`) |
@@ -116,7 +117,8 @@ For bash or fish: `claudeswitch init --install --shell bash|fish`.
 | `cs repair [name]` | fix links and metadata (`--adopt`, `--refresh`) |
 
 `cs help usage`, `cs help tokens`, `cs help aliases`, `cs help isolation`,
-`cs help sharing` and `cs help shell` explain the mechanics in more detail.
+`cs help sharing`, `cs help shell` and `cs help handoff` explain the mechanics
+in more detail.
 
 ## Aliases
 
@@ -169,7 +171,9 @@ Always private, because sharing them would break isolation:
 - `projects/`, `sessions/`, `history.jsonl`, `todos/`, `file-history/`
 
 MCP servers live inside `.claude.json`, so they are per-account by design.
-`cs doctor` fails loudly if any private path ever becomes a symlink.
+`cs doctor` fails loudly if any private path ever becomes a symlink. To
+deliberately move one conversation across that boundary — not link it, not
+share it going forward — see `cs handoff` below.
 
 ## Quota
 
@@ -215,6 +219,36 @@ cs use work        # then run /usage in Claude Code
 
 Claude Code ignores its own cache once it is an hour old, so `cs usage` labels
 anything older as a historical reading, and `cs ls --usage` prefixes it with `~`.
+
+## Handing off a session
+
+Ran into a limit mid-conversation? Continue it on another account, in one
+command, from the project directory, in the terminal that hit the limit:
+
+```sh
+cs handoff work        # copies the session, switches this terminal to `work`,
+                        # and opens `claude --resume` right there
+```
+
+`cs handoff` finds the Claude Code session for the current directory, copies
+its transcript into the target account's `projects/` — under the exact
+directory name Claude Code already gave this project, so `--resume` finds it
+there the same way it would have in the original account — switches this
+terminal over, and launches `claude --resume` for you. That last part works
+even though this process's own output is normally swallowed by
+`eval "$(...)"`: the launch rides along with the exported variables and only
+runs once the shell's `eval` reaches it, in the caller's real shell, after the
+capture around this process has already finished.
+
+Add `--session <id>` when more than one session matches the directory,
+`--from <account>` to pull from an account other than this terminal's current
+one, `--move` to remove it from the source instead of copying, `--no-open` to
+switch without launching `claude`, and `--stay` to skip both.
+
+This is the one command that deliberately crosses the isolation boundary every
+other command protects — `projects/` is otherwise always private per account —
+so it asks for confirmation unless `--yes` is given. See `cs help handoff` for
+the mechanics, including exactly what does and does not come along.
 
 ## Staying logged in
 
